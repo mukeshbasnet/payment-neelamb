@@ -1,7 +1,11 @@
-# Secrets for local development (config vars go in wrangler.jsonc)
-# Copy this file to .dev.vars and fill in your values
+# Copy this file to .dev.vars and replace every placeholder with a random,
+# provider-issued, or otherwise private value. Never commit .dev.vars.
 
-# JWT secret for signing authentication tokens
-# Generate a secure random secret with:
-# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-JWT_SECRET=your-secret-key-here
+# Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=replace-with-at-least-32-random-bytes
+ADMIN_PASSWORD=replace-with-at-least-32-random-bytes
+
+# Local callback test secrets; production callback secrets belong in Wrangler secrets.
+CITIZENS_CALLBACK_SECRET=replace-with-at-least-32-random-bytes
+ESEWA_CALLBACK_SECRET=replace-with-at-least-32-random-bytes
+NEPAL_BANK_CALLBACK_SECRET=replace-with-at-least-32-random-bytes

@@ -1,662 +1,135 @@
-# x402 Payment-Gated Proxy
+# Secure Payment Selector
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/templates/tree/main/x402-proxy-template)
+A single-link payment checkout running on Cloudflare Workers. The landing page lets customers enter an NPR amount and choose Citizens Bank, eSewa, or Nepal Bank. Transactions start as `pending`; a signed provider callback or an authenticated admin confirmation after checking the bank/wallet receipt can mark the matching, unexpired transaction as `paid`. The browser receives a one-hour, `HttpOnly`, `Secure`, `SameSite=Strict` JWT cookie only after it reads that confirmed state.
 
-A Cloudflare Worker that acts as a transparent proxy with payment-gated access using the [x402 protocol](https://x402.org) and stateless cookie-based authentication.
+The project is deployable without Cloudflare credentials for local development. Live provider payments are deliberately fail-closed until payment destinations, JWT signing, and callback verification are configured.
 
-**Live Demo** - Try the built-in endpoints (other routes will fail as no origin is configured):
+## Local development
 
-- [/\_\_x402/health](https://x402proxy-template.news.eti.cfdata.org/__x402/health) - Public health check (200 OK)
-- [/\_\_x402/protected](https://x402proxy-template.news.eti.cfdata.org/__x402/protected) - Protected endpoint (402 Payment Required)
-
-<!-- dash-content-start -->
-
-## Overview
-
-This template implements a **smart proxy** that:
-
-1. **Forwards all requests** to the origin server by default
-2. **Intercepts protected routes** based on configurable patterns
-3. **Requires payment** via the x402 protocol for protected routes
-4. **Issues JWT cookies** valid for 1 hour after payment
-5. **Allows access** to protected routes without additional payments during the valid period
-
-> **Note:** This template is configured for Base Sepolia testnet. For production, update `NETWORK` in `wrangler.jsonc` to a mainnet network (e.g., `"base"`).
-
-### Use Cases
-
-This proxy is ideal for:
-
-- **API Monetization** - Charge per API request or time-based access
-- **Premium Content** - Paywall specific routes without modifying your backend
-- **Rate Limiting with Payments** - Convert rate limits into paid tiers
-- **Microservice Access Control** - Add payment gates to existing services
-- **Demo/Testing Payment Flows** - Prototype payment-gated services quickly
-
-### Key Features
-
-- 🔄 **Transparent Proxy** - Forwards all non-protected requests unchanged
-- 🎯 **Pattern-Based Protection** - Configure which routes require payment
-- 🔐 **Stateless Authentication** - JWT cookies with HMAC-SHA256 signatures
-- 💰 **x402 Protocol Integration** - Accept crypto payments for access
-- 🍪 **Cookie-Based Sessions** - No server-side storage required
-- ⚡ **Edge Computing** - Runs on Cloudflare Workers at the edge
-- 🔒 **Secure** - HttpOnly, Secure, SameSite cookies
-- 📦 **Lightweight** - Minimal overhead, custom JWT implementation (~2-3 KB)
-
-## Architecture
-
-```
-┌─────────────┐
-│   Client    │
-└──────┬──────┘
-       │
-       ▼
-┌──────────────────────────────────────────┐
-│  Cloudflare Worker (x402 Proxy)          │
-│                                          │
-│  ┌────────────────────────────────┐     │
-│  │  Pattern Matcher               │     │
-│  │  Is path protected?            │     │
-│  └────────┬──────────────┬────────┘     │
-│           │ NO           │ YES          │
-│           ▼              ▼              │
-│  ┌────────────┐  ┌──────────────────┐  │
-│  │ Pass       │  │ Auth Middleware  │  │
-│  │ Through    │  │ • Check cookie   │  │
-│  └────────────┘  │ • Verify payment │  │
-│                  │ • Issue cookie   │  │
-│                  └──────────────────┘  │
-│                           │             │
-└───────────────────────────┼─────────────┘
-                            ▼
-                  ┌──────────────────┐
-                  │  Origin Server   │
-                  │  (Your Backend)  │
-                  └──────────────────┘
-```
-
-<!-- dash-content-end -->
-
-## Quick Start
-
-Get up and running in under 2 minutes:
-
-```bash
-# Install dependencies
+```sh
 npm install
-
-# Configure JWT secret for local development
 cp .dev.vars.example .dev.vars
-node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'))" >> .dev.vars
-
-# Start the dev server
+# Replace all secret placeholders with independent random secrets (at least 32 bytes).
 npm run dev
 ```
 
-Visit `http://localhost:8787` to see the proxy in action.
+Open `http://localhost:8787`. Set the payment destinations, `JWT_SECRET`, and `ADMIN_PASSWORD` before checkout options become available. Open `/admin` to sign in and review pending payments. Local Durable Object state is managed by Wrangler.
 
-- Try `http://localhost:8787/__x402/health` for a public endpoint
-- Try `http://localhost:8787/__x402/protected` to see payment requirements
+Run checks:
 
-## Getting Started
-
-> _Already ran Quick Start above? Skip to [How It Works](#how-it-works)._
-
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-- Cloudflare account (for deployment)
-- A wallet address to receive payments (see [Getting a Wallet Address](#getting-a-wallet-address) below)
-- Testnet tokens for testing payments (get from [CDP Faucet](https://docs.cdp.coinbase.com/faucets/introduction/welcome))
-
-### Getting a Wallet Address
-
-You need a wallet address (`PAY_TO`) to receive payments. Any Ethereum-compatible wallet works—use an existing wallet (MetaMask, Coinbase Wallet, etc.) or create one programmatically with [Coinbase Developer Platform](https://docs.cdp.coinbase.com/server-wallets/v2/introduction/quickstart).
-
-### Installation
-
-```bash
-npm install
+```sh
+npm test
+npm run typecheck
+npm run format:check
+npm run lint
+npm run deploy -- --dry-run
 ```
 
-### Configuration
+`npm run deploy -- --dry-run` bundles the Worker and assets and validates Wrangler
+configuration without uploading a deployment. The checkout is a single link at
+`/`; customers enter a positive amount in the configured currency and choose an
+enabled method from `/api/config`. The server validates and stores the submitted
+amount with the selected provider in the pending transaction.
 
-#### Configuration Options
+## Configuration
 
-The proxy is configured via environment variables in `wrangler.jsonc`:
+### Public configuration
 
-| Variable             | Required | Description                                    | Example                          |
-| -------------------- | -------- | ---------------------------------------------- | -------------------------------- |
-| `PAY_TO`             | Yes      | Wallet address to receive payments             | `"0x..."`                        |
-| `NETWORK`            | Yes      | Blockchain network for payments                | `"base-sepolia"` or `"base"`     |
-| `JWT_SECRET`         | Yes      | Secret for signing auth tokens (set as secret) | (64 hex chars)                   |
-| `PROTECTED_PATTERNS` | Yes      | Array of route pricing configurations          | See below                        |
-| `ORIGIN_URL`         | No       | External URL to proxy to (if not using DNS)    | `"https://api.example.com"`      |
-| `ORIGIN_SERVICE`     | No       | Service Binding to origin Worker               | Configured in wrangler.jsonc     |
-| `FACILITATOR_URL`    | No       | x402 facilitator endpoint (defaults to CDP)    | `"https://x402.org/facilitator"` |
+Set these non-secret values in `wrangler.jsonc` under `vars`:
 
-#### PROTECTED_PATTERNS
+| Variable                    | Purpose                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| `PAYMENT_CURRENCY`          | Three-letter currency shown for the customer-entered amount; defaults to `NPR`. |
+| `PAYMENT_EXPIRY_MINUTES`    | Pending payment lifetime from 5 to 60 minutes.                                  |
+| `CITIZENS_BANK_DESTINATION` | Account name/number and other pay-to instructions shown to customers.           |
+| `ESEWA_MERCHANT_ID`         | eSewa merchant identifier shown to customers.                                   |
+| `NEPAL_BANK_DESTINATION`    | Account name/number and other pay-to instructions shown to customers.           |
+| `CITIZENS_BANK_QR_IMAGE`    | Optional path to the Citizens Bank QR image in `public/`.                       |
+| `ESEWA_QR_IMAGE`            | Optional path to the eSewa QR image in `public/`.                               |
+| `NEPAL_BANK_QR_IMAGE`       | Optional path to the Nepal Bank QR image in `public/`.                          |
 
-Each entry defines a protected route and its payment requirements:
+Payment destinations are intentionally public checkout details. Do not put banking passwords, PINs, one-time codes, API credentials, or callback secrets here.
 
-```jsonc
-"PROTECTED_PATTERNS": [
-  {
-    "pattern": "/premium/*",
-    "price": "$0.01",
-    "description": "Access to premium content for 1 hour"
-  },
-  {
-    "pattern": "/api/pro/*",
-    "price": "$0.10",
-    "description": "Pro API access"
-  }
-]
+Customers may enter any positive amount with up to two decimal places. There is
+no configured maximum; the server rejects zero, negative, fractional-paisa, or
+unsafe-integer amounts. The QR images are static merchant codes, so customers
+must enter the checkout amount in their bank or wallet app after scanning.
+
+The supplied provider QR images are served from `public/payment-qr/` and
+configured in `wrangler.jsonc`. To replace one, use the actual QR image supplied
+or issued for your merchant account and update its matching variable to a
+root-relative PNG, JPEG, or WebP path. The application does not fabricate
+payment QR codes. If an image is unavailable, the checkout continues to show
+the payment destination and instructions without a QR.
+
+### Secrets
+
+Create independent random secrets, each at least 32 bytes. For local development, store them in the ignored `.dev.vars` file. In production, set Worker secrets:
+
+```sh
+npx wrangler secret put JWT_SECRET
+npx wrangler secret put ADMIN_PASSWORD
+npx wrangler secret put CITIZENS_CALLBACK_SECRET
+npx wrangler secret put ESEWA_CALLBACK_SECRET
+npx wrangler secret put NEPAL_BANK_CALLBACK_SECRET
 ```
 
-#### Proxy Modes
+`JWT_SECRET` signs customer sessions. `ADMIN_PASSWORD` protects `/admin`; use a unique random value, not a human-memorable password. Admin sessions are signed, `HttpOnly`, `Secure`, `SameSite=Strict` cookies and expire after eight hours. Each callback secret authenticates that provider's callback; never share the JWT or admin secret with a provider. A payment method is available when it has a destination, `JWT_SECRET`, and either its callback secret or `ADMIN_PASSWORD`. Provider callbacks still require that provider's callback secret.
 
-The proxy supports three modes for routing requests to your backend. Choose based on your architecture:
+The admin payment list shows up to 100 oldest pending transactions. Confirm a payment only after independently checking that the exact amount has arrived in the merchant account. Admin confirmations are persisted with their verification time and `admin` method; expired, already-confirmed, or failed transactions cannot be confirmed again.
 
-##### DNS-Based Mode (Default)
+If a provider requires a merchant API key or secret to create payment intents, store it as a separate Wrangler secret. This template does not invent or embed vendor API credentials.
 
-**Best for:** Traditional backend servers (VMs, containers, other hosting providers)
+## Callback contract and vendor integration
 
-When `ORIGIN_URL` is **not set**, requests are forwarded to the origin server defined in your Cloudflare DNS records.
+The Worker endpoint is `POST /api/callbacks/{provider}`, where provider is `citizens-bank`, `esewa`, or `nepal-bank`. The starter verifier requires `X-Payment-Signature: sha256=<hex HMAC-SHA256>` over the exact raw UTF-8 request body using that provider's callback secret. Its normalized JSON body is:
 
-**Setup:**
-
-1. Add a DNS record in Cloudflare pointing to your origin server:
-   - Type: `A` (for IP address) or `CNAME` (for hostname)
-   - Name: `api` (or your subdomain)
-   - Content: Your origin server IP or hostname
-   - Proxy status: **Proxied** (orange cloud)
-
-2. Configure a route in `wrangler.jsonc`:
-
-   ```jsonc
-   "routes": [
-     { "pattern": "api.example.com/*", "zone_name": "example.com" }
-   ]
-   ```
-
-3. Deploy. The proxy will forward requests to your origin server automatically.
-
-```
-User → api.example.com → x402 Proxy → Origin Server (via DNS)
-```
-
-##### External Origin Mode
-
-**Best for:** Another Cloudflare Worker, or any external service with a public URL
-
-When `ORIGIN_URL` **is set**, requests are rewritten to that URL. This lets you proxy to another Worker on a Custom Domain or any external API.
-
-**Setup:**
-
-1. Set `ORIGIN_URL` in `wrangler.jsonc`:
-
-   ```jsonc
-   "vars": {
-     "ORIGIN_URL": "https://my-origin-worker.example.com",
-     // ... other vars
-   }
-   ```
-
-2. If your origin is a Worker, deploy it with a [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
-
-3. Deploy the proxy. Requests are rewritten to the origin URL while preserving the original `Host` header.
-
-```
-User → api.example.com → x402 Proxy → my-origin-worker.example.com (URL rewrite)
-```
-
-**Why External Origin mode?** Cloudflare routes a hostname to one Worker only. You can't chain Workers on the same hostname via routing. External Origin mode solves this by rewriting the URL to a different hostname where your origin Worker lives.
-
-##### Service Binding Mode
-
-**Best for:** Another Cloudflare Worker in your account (fastest option)
-
-When `ORIGIN_SERVICE` **is bound**, requests are sent directly to the bound Worker with zero network overhead. Both Workers run on the same thread.
-
-**Setup:**
-
-1. Add a service binding in `wrangler.jsonc`:
-
-   ```jsonc
-   "services": [
-     { "binding": "ORIGIN_SERVICE", "service": "my-origin-worker" }
-   ]
-   ```
-
-2. Deploy. The proxy will call the origin Worker directly via the binding.
-
-```
-User → api.example.com → x402 Proxy → Origin Worker (via Service Binding)
-```
-
-**Why Service Binding mode?** [Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) provide the fastest Worker-to-Worker communication with no network hop. The origin Worker doesn't even need a public route.
-
-##### Quick Comparison
-
-| Mode            | Config           | Origin Type           | Use Case                                          |
-| --------------- | ---------------- | --------------------- | ------------------------------------------------- |
-| DNS-Based       | (default)        | Traditional server    | Your backend is a VM, container, or external host |
-| External Origin | `ORIGIN_URL`     | Worker or any URL     | Your backend is another Worker or external API    |
-| Service Binding | `ORIGIN_SERVICE` | Worker (same account) | Fastest option for Worker-to-Worker               |
-
-#### Local Development Setup
-
-1. **Copy the example environment file:**
-
-   ```bash
-   cp .dev.vars.example .dev.vars
-   ```
-
-2. **Generate a secure JWT secret:**
-
-   ```bash
-   node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'))" >> .dev.vars
-   ```
-
-3. **Verify your `.dev.vars` file contains:**
-   ```bash
-   JWT_SECRET=<your-generated-secret>
-   ```
-
-### Development
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-The server will be available at `http://localhost:8787`
-
-### Available Scripts
-
-**Most commonly used:**
-
-| Command          | Description                    |
-| ---------------- | ------------------------------ |
-| `npm run dev`    | Start local development server |
-| `npm run deploy` | Deploy to Cloudflare Workers   |
-
-**Other scripts:**
-
-| Command                | Description                                  |
-| ---------------------- | -------------------------------------------- |
-| `npm run cf-typegen`   | Generate TypeScript types from Worker config |
-| `npm run typecheck`    | Run TypeScript type checking                 |
-| `npm run format`       | Format code with Prettier                    |
-| `npm run format:check` | Check code formatting                        |
-| `npm run lint`         | Run all checks (typecheck + format + ESLint) |
-| `npm run lint:fix`     | Auto-fix formatting and linting issues       |
-| `npm run test:client`  | Run automated end-to-end test                |
-
-## How It Works
-
-### Key Implementation Details
-
-Understanding the core concepts will help you configure and use this proxy effectively.
-
-#### Stateless JWT Authentication
-
-The proxy uses a custom JWT implementation built on Web Crypto API:
-
-- **Signing:** HMAC-SHA256 with secret key
-- **Payload:** `{ paid: true, iat, exp }`
-- **Validation:** Signature verification + expiration check
-- **Size:** ~2-3 KB minified (no dependencies)
-
-#### Payment Flow
-
-1. Client requests protected route (e.g., `/premium`) without cookie
-2. Proxy responds with `402 Payment Required` + payment details
-3. Client creates signed payment (e.g., for USDC on Base Sepolia)
-4. Client retries request with `X-PAYMENT` header
-5. x402 middleware verifies payment via facilitator
-6. Proxy issues JWT cookie + forwards request to origin
-7. Subsequent requests use cookie (valid for 1 hour) - no payment needed
-8. Origin server receives authenticated requests transparently
-
-**Key insight:** The origin server never knows about the payment logic. It just receives authenticated requests as if the proxy wasn't there.
-
-### Proxy Behavior
-
-The worker acts as a **transparent proxy** that forwards all requests to your origin server, except for routes matching the `PROTECTED_PATTERNS` configuration.
-
-### Public Routes (Default)
-
-Any route NOT in `PROTECTED_PATTERNS` is forwarded directly to the origin:
-
-```bash
-curl https://your-worker.dev/any-path
-# → Proxied directly to origin server
-```
-
-### Protected Routes
-
-Routes matching `PROTECTED_PATTERNS` require payment or a valid authentication cookie:
-
-**Without payment or cookie:**
-
-- Returns `402 Payment Required`
-- Includes payment requirements in response body
-
-**With valid payment:**
-
-- Verifies payment via x402 facilitator
-- Issues JWT cookie (valid for 1 hour)
-- Proxies request to origin server
-
-**With valid cookie:**
-
-- Validates JWT signature and expiration
-- Proxies request to origin immediately (no payment required)
-
-### Example: `/premium` endpoint
-
-```bash
-# First request without auth
-curl https://your-worker.dev/premium
-# → 402 Payment Required
-
-# Request with payment
-curl https://your-worker.dev/premium -H "X-PAYMENT: <encoded-payment>"
-# → Cookie issued + request proxied to origin
-
-# Subsequent requests with cookie
-curl https://your-worker.dev/premium -H "Cookie: auth_token=..."
-# → Proxied to origin (no payment needed)
-```
-
-## Testing
-
-### Automated Testing
-
-Run the automated test client:
-
-```bash
-PRIVATE_KEY=0x... npm run test:client
-```
-
-This will:
-
-1. Request `/premium` without payment (receives 402)
-2. Create and sign a payment with your wallet
-3. Submit payment and receive premium content
-4. Extract JWT cookie
-5. Test cookie authentication (no payment needed)
-
-See [TESTING.md](./TESTING.md) for detailed testing instructions.
-
-### Manual Testing with curl
-
-1. **Test public endpoint:**
-
-```bash
-curl http://localhost:8787/__x402/health
-```
-
-2. **Request protected endpoint (no payment):**
-
-```bash
-curl -v http://localhost:8787/__x402/protected
-# Returns 402 with payment requirements
-```
-
-3. **Request with payment (requires x402 SDK):**
-   See test-client.ts for implementation example
-
-> **Note:** Automated testing with `npm run test:client` requires a funded wallet with testnet tokens. If you're just evaluating the template, the Playwright tests (`pnpm test:e2e x402-proxy-template` from repo root) cover core functionality without requiring payments.
-
-## Project Structure
-
-```
-.
-├── src/
-│   ├── index.ts          # Main application and routes
-│   ├── auth.ts           # Authentication middleware
-│   └── jwt.ts            # JWT utilities (sign/verify)
-├── public/
-│   └── index.html        # Static assets
-├── test-client.ts        # Automated test client
-├── wrangler.jsonc        # Cloudflare Worker configuration
-├── .dev.vars             # Local environment variables (gitignored)
-├── .prettierrc           # Prettier configuration
-├── eslint.config.js      # ESLint configuration
-└── tsconfig.json         # TypeScript configuration
-```
-
-## Advanced Configuration
-
-### Proxy Architecture
-
-The worker uses a single catch-all middleware that:
-
-1. **Checks path** against `PROTECTED_PATTERNS`
-2. **For unprotected paths**: Proxies request immediately to origin
-3. **For protected paths**:
-   - Checks for valid JWT cookie
-   - If no valid cookie, requires x402 payment
-   - Issues JWT cookie on successful payment
-   - Proxies authenticated request to origin
-
-The proxy mode (DNS-based, External Origin, or Service Binding) determines how requests reach your backend. See [Proxy Modes](#proxy-modes) for details.
-
-### Configuration Examples
-
-**Single route with one price:**
-
-```jsonc
-"PROTECTED_PATTERNS": [
-  {
-    "pattern": "/premium",
-    "price": "$0.01",
-    "description": "Access to premium content for 1 hour"
-  }
-]
-```
-
-**Multiple routes with different prices:**
-
-```jsonc
-"PROTECTED_PATTERNS": [
-  {
-    "pattern": "/premium",
-    "price": "$0.01",
-    "description": "Basic premium access"
-  },
-  {
-    "pattern": "/api/pro/*",
-    "price": "$0.10",
-    "description": "Pro API access"
-  },
-  {
-    "pattern": "/dashboard",
-    "price": "$1.00",
-    "description": "Full dashboard access"
-  }
-]
-```
-
-**Wildcard patterns:**
-
-```jsonc
-"PROTECTED_PATTERNS": [
-  {
-    "pattern": "/api/private/*",
-    "price": "$0.05",
-    "description": "Private API access"
-  }
-]
-```
-
-## Security Considerations
-
-### Cookie Security
-
-Cookies are configured with security best practices:
-
-- `HttpOnly`: Prevents JavaScript access (XSS protection)
-- `Secure`: HTTPS only in production
-- `SameSite=Strict`: CSRF protection
-- 1-hour expiration: Limits exposure window
-
-### JWT Security
-
-- Secret key stored in environment variables (not in code)
-- HMAC-SHA256 cryptographic signing
-- Expiration validation on every request
-- No sensitive data in payload
-
-### Payment Security
-
-- All payments verified through facilitator
-- Client cannot forge payment proofs
-- Payment amount validation
-- Network/token validation
-
-## Bot Management Filtering (Optional)
-
-With **Bot Management for Enterprise** enabled on your domain, x402-proxy can distinguish between human and automated traffic:
-
-- Humans can access protected routes without payment
-- Bots are charged unless explicitly exempted
-- You can allow specific crawlers (e.g., Googlebot, search engines) free access
-
-### Configuration Example
-
-```jsonc
-"PROTECTED_PATTERNS": [
-  {
-    "pattern": "/api/premium/*",
-    "price": "$0.10",
-    "description": "Premium API access",
-    "bot_score_threshold": 30,           // Lower score = more likely automated
-    "except_detection_ids": [
-      120623194,  // Googlebot
-      132995013   // ChatGPT-User
-    ]
-  }
-]
-```
-
-The configuration uses two settings:
-
-- `bot_score_threshold` (1-99) - determines the cutoff for blocking bot traffic and allowing humans through. See [Bot Score](https://developers.cloudflare.com/bots/concepts/bot-score/) for how scores are calculated.
-- `except_detection_ids` - array of bot detection IDs to whitelist. A sample list is available in [`src/bots.ts`](./src/bots.ts).
-
-Without Bot Management, all traffic to protected routes requires payment.
-
-## Deployment
-
-### Production Deployment
-
-> **Important:** For production, update `NETWORK` in `wrangler.jsonc` to a mainnet network (e.g., `"base"`).
-
-1. **Set up secrets:**
-
-```bash
-wrangler secret put JWT_SECRET
-# Enter your production JWT secret
-```
-
-2. **Update configuration:**
-   Edit `wrangler.jsonc` with your production wallet address and mainnet network
-
-3. **Deploy:**
-
-```bash
-npm run deploy
-```
-
-### Environment-Specific Configuration
-
-For multiple environments (dev/staging/prod), use [Wrangler environments](https://developers.cloudflare.com/workers/wrangler/configuration/#environments).
-
-## Development
-
-### Code Quality
-
-The project enforces code quality through:
-
-- **TypeScript** - Full type safety
-- **ESLint** - Code quality rules
-- **Prettier** - Consistent formatting
-- **Pre-commit checks** - All checks run via `npm run lint`
-
-### Adding New Protected Routes
-
-Simply add a new entry to `PROTECTED_PATTERNS` in `wrangler.jsonc`:
-
-```jsonc
+```json
 {
-	"vars": {
-		"PROTECTED_PATTERNS": [
-			{
-				"pattern": "/premium",
-				"price": "$0.01",
-				"description": "Premium content access",
-			},
-			{
-				"pattern": "/api/private/*",
-				"price": "$0.05",
-				"description": "Private API access",
-			},
-			{
-				"pattern": "/dashboard",
-				"price": "$0.10",
-				"description": "Dashboard access",
-			},
-		],
-	},
+	"transactionId": "the-Worker-generated-checkout-UUID",
+	"providerTransactionId": "unique-provider-payment-reference",
+	"status": "paid",
+	"amountPaise": 10000,
+	"currency": "NPR"
 }
 ```
 
-**That's it!** No code changes needed. The proxy will automatically:
+The callback must report `paid` or `failed`. A paid callback is accepted only once for a pending transaction before its expiry, with exact provider, amount, and currency matches. Repeated delivery of the same verified provider transaction is idempotent; reusing a provider transaction reference for another checkout is rejected. A browser redirect or user-submitted receipt is not proof of payment.
 
-- Require payment for routes matching any pattern
-- Apply the correct price for each route
-- Issue cookies after payment
-- Forward authenticated requests to your origin server
+The generic raw-body HMAC adapter is a secure integration boundary, **not a claim that all three providers use this header or payload**. Before going live, implement each provider's current official callback signature, timestamp/replay rules, field normalization, and server-side payment-status/amount confirmation in `src/payment-callback.ts`. Keep the exact provider callback secret in Wrangler secrets. Do not mark a payment paid based only on a client-side return URL.
 
-## Troubleshooting
+The browser polls `GET /api/payments/{transactionId}`. Only when the Durable Object reports `paid` does the Worker issue the signed session cookie. Its expiration is capped at one hour after confirmation, so repeated polls cannot extend access.
 
-### "Invalid payment" error
+## Deployment
 
-- Check wallet has enough testnet tokens
-- Verify you're on Base Sepolia network
-- Ensure payment amount matches requirement
+The Wrangler config uses a SQLite-backed Durable Object for strongly consistent transaction state and includes its initial migration, static assets, current compatibility date, Workers Logs, and Traces. No D1/KV IDs need to be provisioned.
 
-### Cookie doesn't work
+1. Configure the public payment destinations and confirm the provider callback adapters match their official specifications.
+2. Authenticate Wrangler with the intended Cloudflare account (`npx wrangler login`) or use an already-authorized CI environment.
+3. Set the four production secrets listed above.
+4. Deploy with `npm run deploy`.
 
-- Check cookie isn't expired (1 hour validity)
-- Verify JWT_SECRET is set in `.dev.vars`
-- Ensure cookie is being sent in request headers
+Cloudflare authentication is not needed for `npm run dev`, tests, or type checking. A live Worker deployment requires Cloudflare account access. The repo contains no provider credentials; the merchant must obtain them from each provider as needed.
 
-### TypeScript errors
+Before deploying, run `npm run deploy -- --dry-run` to verify the Worker bundle,
+static assets, and configured bindings. This does not test remote credentials,
+provider callback integration, or deploy the Worker.
 
-- Run `npm run cf-typegen` to regenerate types after changing `wrangler.jsonc`
-- Check `tsconfig.json` includes correct files
+## Endpoints
 
-## Resources
+| Method | Path                               | Purpose                                                             |
+| ------ | ---------------------------------- | ------------------------------------------------------------------- |
+| `GET`  | `/`                                | Single-link payment selector.                                       |
+| `GET`  | `/api/config`                      | Public price and currently enabled payment methods.                 |
+| `POST` | `/api/payments`                    | Create a pending transaction for the submitted amount and provider. |
+| `GET`  | `/api/payments/{id}`               | Read transaction status; issue a cookie only for verified payment.  |
+| `POST` | `/api/callbacks/{provider}`        | Verify and process a normalized provider callback.                  |
+| `GET`  | `/api/session`                     | Check the signed payment session cookie.                            |
+| `GET`  | `/admin`                           | Admin sign-in and pending-payment confirmation panel.               |
+| `POST` | `/api/admin/login`                 | Authenticate with `ADMIN_PASSWORD` and set an admin session cookie. |
+| `GET`  | `/api/admin/payments`              | List pending payments (admin session required).                     |
+| `POST` | `/api/admin/payments/{id}/confirm` | Manually confirm a specific payment (admin session required).       |
+| `POST` | `/api/admin/logout`                | Expire the admin session cookie.                                    |
+| `GET`  | `/api/health`                      | Worker health check.                                                |
 
-- [x402 Protocol Documentation](https://x402.gitbook.io/x402)
-- [x402 GitHub](https://github.com/coinbase/x402) - Open source repository
-- [CDP Server Wallet Quickstart](https://docs.cdp.coinbase.com/server-wallets/v2/introduction/quickstart) - Create wallets programmatically
-- [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
-- [Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) - Worker-to-Worker communication
-- [Base Sepolia Testnet](https://docs.base.org/network-information/#base-testnet-sepolia)
-
-## License
-
-This project is provided as-is for educational and demonstration purposes.
-
-## Contributing
-
-This is a demonstration project. For questions or issues, please refer to the [x402 Discord](https://discord.gg/invite/cdp).
+Worker secrets and full callback payloads are never returned by the public config or transaction-status APIs.

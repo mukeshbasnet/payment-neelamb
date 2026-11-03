@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="theme-color" content="#f6f7fb" />
+		<title>Payment admin | Naya</title>
+		<link rel="stylesheet" href="/admin.css" />
+		<script src="/admin.js" defer></script>
+	</head>
+	<body>
+		<header class="topbar">
+			<a class="brand" href="/">Naya Payments</a>
+			<a href="/">Checkout</a>
+		</header>
+		<main>
+			<section class="panel">
+				<p class="eyebrow">PAYMENT ADMIN</p>
+				<h1>Confirm received payments</h1>
+				<p class="intro">
+					Check your bank or wallet account before confirming a payment. Only
+					confirm after the exact amount has arrived.
+				</p>
+				<form id="login-form">
+					<label for="admin-password">Admin password</label>
+					<input
+						id="admin-password"
+						name="password"
+						type="password"
+						autocomplete="current-password"
+						required
+					/>
+					<button type="submit">Sign in</button>
+				</form>
+				<p id="message" role="status" aria-live="polite"></p>
+				<section id="payments-section" hidden>
+					<div class="list-heading">
+						<h2>Pending payments</h2>
+						<button class="secondary" id="refresh-button" type="button">
+							Refresh
+						</button>
+					</div>
+					<p class="note">
+						Confirming marks this payment as received and grants the customer
+						their paid session.
+					</p>
+					<div id="payments-list"></div>
+					<button class="text-button" id="logout-button" type="button">
+						Sign out
+					</button>
+				</section>
+			</section>
+		</main>
+		<footer>Secure checkout · Nepal</footer>
+	</body>
+</html>

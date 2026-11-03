@@ -1,130 +1,167 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { describe, it } from "node:test";
-import app from "../src";
-import type { Env } from "../src/env";
+import {
+	parseCallbackPayload,
+	verifyCallbackSignature,
+} from "../src/payment-callback";
+import {
+	isValidPaymentAmountPaise,
+	parseNprAmountToPaise,
+} from "../src/payment-amount";
+import {
+	createAdminSession,
+	verifyAdminPassword,
+	verifyAdminSession,
+} from "../src/admin-auth";
+import { generateJWT, verifyJWT } from "../src/jwt";
 
-function requestWithRawUrl(url: string): Request {
-	const request = new Request("https://example.com/");
-	Object.defineProperty(request, "url", { value: url });
-	return request;
-}
+const SECRET = "a".repeat(64);
+const PAYMENT_ID = "7c4c965e-bd43-4fa2-8506-09e6aefb3a5d";
 
-function createEnv() {
-	let originFetchCalls = 0;
-	const env = {
-		ORIGIN_SERVICE: {
-			fetch: async () => {
-				originFetchCalls++;
-				return new Response("origin content");
-			},
-		},
-		PROTECTED_PATTERNS: [
-			{
-				pattern: "/premium/*",
-				price: "$0.01",
-				description: "Premium content",
-			},
-		],
-	} as unknown as Env;
-
-	return { env, getOriginFetchCalls: () => originFetchCalls };
-}
-
-describe("x402 protected route matching", () => {
-	it("rejects a leading dot segment instead of proxying protected content", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/./premium/secret"),
-			env
-		);
-
-		assert.equal(response.status, 400);
-		assert.equal(getOriginFetchCalls(), 0);
+describe("admin authentication", () => {
+	it("verifies strong passwords and rejects invalid candidates", async () => {
+		assert.equal(await verifyAdminPassword(SECRET, SECRET), true);
+		assert.equal(await verifyAdminPassword("wrong-password", SECRET), false);
+		assert.equal(await verifyAdminPassword("short", "short"), false);
+		assert.equal(await verifyAdminPassword("x".repeat(1025), SECRET), false);
 	});
 
-	it("rejects parent segments instead of proxying protected content", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/free/../premium/secret"),
-			env
+	it("creates expiring signed sessions and rejects tampering", async () => {
+		const now = 1_800_000_000_000;
+		const session = await createAdminSession(SECRET, now);
+		assert.equal(await verifyAdminSession(session.token, SECRET, now), true);
+		assert.equal(
+			await verifyAdminSession(session.token, "b".repeat(64), now),
+			false
 		);
+		assert.equal(
+			await verifyAdminSession(session.token, SECRET, now + 8 * 60 * 60 * 1000),
+			false
+		);
+		const [expiresAt, signature] = session.token.split(".");
+		const changedToken = `${expiresAt}.${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
+		assert.equal(await verifyAdminSession(changedToken, SECRET, now), false);
+	});
+});
 
-		assert.equal(response.status, 400);
-		assert.equal(getOriginFetchCalls(), 0);
+describe("customer-entered payment amounts", () => {
+	it("converts NPR decimal amounts to exact paisa", () => {
+		assert.equal(parseNprAmountToPaise("1"), 100);
+		assert.equal(parseNprAmountToPaise("1.2"), 120);
+		assert.equal(parseNprAmountToPaise("100.05"), 10005);
+		assert.equal(parseNprAmountToPaise(" 0.01 "), 1);
+		assert.equal(
+			parseNprAmountToPaise("90071992547409.91"),
+			Number.MAX_SAFE_INTEGER
+		);
 	});
 
-	it("rejects percent-encoded dot segments", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/%2e/premium/secret"),
-			env
-		);
-
-		assert.equal(response.status, 400);
-		assert.equal(getOriginFetchCalls(), 0);
+	it("rejects zero, negative, malformed, and unsafe amounts", () => {
+		for (const value of [
+			"0",
+			"-1",
+			"1.001",
+			"1e3",
+			"NaN",
+			"90071992547409.92",
+		]) {
+			assert.equal(parseNprAmountToPaise(value), null, value);
+		}
 	});
 
-	it("rejects repeated slashes instead of relying on origin normalization", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
+	it("accepts only positive safe integer paisa from checkout requests", () => {
+		assert.equal(isValidPaymentAmountPaise(1), true);
+		assert.equal(isValidPaymentAmountPaise(Number.MAX_SAFE_INTEGER), true);
+		assert.equal(isValidPaymentAmountPaise(0), false);
+		assert.equal(isValidPaymentAmountPaise(-1), false);
+		assert.equal(isValidPaymentAmountPaise(1.5), false);
+		assert.equal(isValidPaymentAmountPaise(Number.MAX_SAFE_INTEGER + 1), false);
+		assert.equal(isValidPaymentAmountPaise("100"), false);
+	});
+});
 
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com//premium/secret"),
-			env
+describe("provider callback verification", () => {
+	it("verifies the exact raw callback body", async () => {
+		const body = JSON.stringify({
+			transactionId: PAYMENT_ID,
+			providerTransactionId: "esewa-12345",
+			status: "paid",
+			amountPaise: 10000,
+			currency: "NPR",
+		});
+		const signature = createHmac("sha256", SECRET).update(body).digest("hex");
+
+		assert.equal(
+			await verifyCallbackSignature(body, `sha256=${signature}`, SECRET),
+			true
 		);
-
-		assert.equal(response.status, 400);
-		assert.equal(getOriginFetchCalls(), 0);
+		assert.equal(
+			await verifyCallbackSignature(`${body} `, `sha256=${signature}`, SECRET),
+			false
+		);
+		assert.equal(
+			await verifyCallbackSignature(body, "not-a-signature", SECRET),
+			false
+		);
 	});
 
-	it("continues to protect canonical wildcard paths", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/premium/secret"),
-			env
+	it("accepts only normalized callback data with a valid payment reference", () => {
+		const payload = {
+			transactionId: PAYMENT_ID,
+			providerTransactionId: "bank-txn-88",
+			status: "paid",
+			amountPaise: 10000,
+			currency: "NPR",
+		};
+		assert.deepEqual(parseCallbackPayload(payload, "citizens-bank"), {
+			...payload,
+			provider: "citizens-bank",
+		});
+		assert.equal(
+			parseCallbackPayload(
+				{ ...payload, amountPaise: "10000" },
+				"citizens-bank"
+			),
+			null
 		);
+		assert.equal(
+			parseCallbackPayload(
+				{ ...payload, status: "confirmed" },
+				"citizens-bank"
+			),
+			null
+		);
+		assert.equal(
+			parseCallbackPayload(
+				{ ...payload, transactionId: "not-a-uuid" },
+				"citizens-bank"
+			),
+			null
+		);
+	});
+});
 
-		assert.equal(response.status, 500);
-		assert.equal(getOriginFetchCalls(), 0);
+describe("payment session JWT", () => {
+	it("round-trips signed payment claims and rejects modified tokens", async () => {
+		const token = await generateJWT(SECRET, PAYMENT_ID, "esewa", 300);
+		const payload = await verifyJWT(token, SECRET);
+		assert.ok(payload);
+		assert.equal(payload.paid, true);
+		assert.equal(payload.paymentId, PAYMENT_ID);
+		assert.equal(payload.provider, "esewa");
+		assert.equal(payload.exp - payload.iat, 300);
+
+		const [header, encodedPayload, signature] = token.split(".");
+		assert.equal(
+			await verifyJWT(`${header}.${encodedPayload}.${signature}x`, SECRET),
+			null
+		);
+		assert.equal(await verifyJWT(token, "b".repeat(64)), null);
 	});
 
-	it("protects the wildcard prefix itself", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/premium"),
-			env
-		);
-
-		assert.equal(response.status, 500);
-		assert.equal(getOriginFetchCalls(), 0);
-	});
-
-	it("matches percent-encoded ordinary characters using Hono semantics", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/%70remium/secret"),
-			env
-		);
-
-		assert.equal(response.status, 500);
-		assert.equal(getOriginFetchCalls(), 0);
-	});
-
-	it("does not protect paths that merely share a wildcard prefix", async () => {
-		const { env, getOriginFetchCalls } = createEnv();
-
-		const response = await app.fetch(
-			requestWithRawUrl("https://example.com/premiumXYZ"),
-			env
-		);
-
-		assert.equal(response.status, 200);
-		assert.equal(await response.text(), "origin content");
-		assert.equal(getOriginFetchCalls(), 1);
+	it("refuses weak signing keys and invalid session lifetimes", async () => {
+		await assert.rejects(() => generateJWT("short", PAYMENT_ID, "esewa"));
+		await assert.rejects(() => generateJWT(SECRET, PAYMENT_ID, "esewa", 3601));
 	});
 });

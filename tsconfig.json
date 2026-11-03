@@ -8,10 +8,7 @@
 		"lib": ["ESNext"],
 		"jsx": "react-jsx",
 		"jsxImportSource": "hono/jsx",
-		"types": [
-			"./worker-configuration.d.ts",
-			"node"
-		]
+		"types": ["./worker-configuration.d.ts", "node"]
 	},
 	"include": ["src/**/*", "test-client.ts", "worker-configuration.d.ts"],
 	"exclude": ["node_modules", "dist", ".wrangler"]
