@@ -35,6 +35,57 @@ function formatAmount(amountPaise, currency) {
 	}).format(amountPaise / 100);
 }
 
+function formatDestinationLabel(key) {
+	if (/^eSewa[_\s-]*id$/i.test(key)) {
+		return "eSewa ID";
+	}
+	return key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/[_-]+/g, " ")
+		.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderDestination(destination) {
+	paymentDestination.replaceChildren();
+	let details;
+	try {
+		details = JSON.parse(destination);
+	} catch {
+		details = null;
+	}
+
+	const entries =
+		details &&
+		typeof details === "object" &&
+		!Array.isArray(details) &&
+		Object.entries(details).filter(
+			([key, value]) =>
+				key.trim() !== "" &&
+				(typeof value === "string" ||
+					typeof value === "number" ||
+					typeof value === "boolean") &&
+				String(value).trim() !== ""
+		);
+
+	if (!entries?.length) {
+		const value = document.createElement("strong");
+		value.textContent = destination;
+		paymentDestination.append(value);
+		return;
+	}
+
+	for (const [key, value] of entries) {
+		const row = document.createElement("div");
+		row.className = "destination-detail";
+		const label = document.createElement("span");
+		label.textContent = formatDestinationLabel(key);
+		const content = document.createElement("strong");
+		content.textContent = String(value);
+		row.append(label, content);
+		paymentDestination.append(row);
+	}
+}
+
 function showError(message) {
 	errorMessage.textContent = message;
 	errorMessage.hidden = false;
@@ -227,7 +278,7 @@ form.addEventListener("submit", async (event) => {
 
 		activeTransaction = result;
 		paymentReference.textContent = result.id;
-		paymentDestination.textContent = result.destination;
+		renderDestination(result.destination);
 		paymentInstructions.textContent = result.instructions;
 		paymentQr.hidden = !result.qrImage;
 		if (result.qrImage) {

@@ -449,8 +449,29 @@ h1 {
 	font-size: 11px;
 }
 
-.reference-box strong,
-.destination-box strong {
+.reference-box strong {
+	overflow-wrap: anywhere;
+	font-size: 14px;
+}
+
+.destination-details {
+	display: grid;
+	gap: 8px;
+}
+
+.destination-detail {
+	display: grid;
+	grid-template-columns: minmax(90px, 0.4fr) minmax(0, 1fr);
+	align-items: start;
+	gap: 12px;
+}
+
+.destination-detail span {
+	font-size: 12px;
+}
+
+.destination-detail strong,
+.destination-details > strong {
 	overflow-wrap: anywhere;
 	font-size: 14px;
 }
