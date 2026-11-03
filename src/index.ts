@@ -690,11 +690,6 @@ export default {
 						: jsonResponse({ error: "Invalid payment reference" }, 400)
 				);
 			}
-			if (url.pathname === "/admin" && request.method === "GET") {
-				return addSecurityHeaders(
-					Response.redirect(new URL("/admin.html", request.url).toString(), 302)
-				);
-			}
 			if (
 				url.pathname.startsWith("/api/payments/") &&
 				request.method === "GET"
