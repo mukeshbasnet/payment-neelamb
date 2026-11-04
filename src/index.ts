@@ -9,6 +9,8 @@ import {
 	verifyAdminSession,
 } from "./admin-auth";
 import { isValidPaymentAmountPaise } from "./payment-amount";
+import { parseCustomerDetails } from "./payment-customer";
+import { parseAdminPaymentQuery } from "./admin-payment-query";
 import { generateJWT, verifyJWT } from "./jwt";
 import type { Env, PaymentProvider } from "./env";
 
@@ -31,6 +33,18 @@ interface PaymentTransaction {
 	createdAt: number;
 	expiresAt: number;
 	verifiedAt: number | null;
+	customerName?: string;
+	customerPhone?: string;
+}
+
+interface AdminPayment extends Omit<
+	PaymentTransaction,
+	"customerName" | "customerPhone"
+> {
+	customerName: string | null;
+	customerPhone: string | null;
+	providerTransactionId: string | null;
+	verificationMethod: "provider" | "admin";
 }
 
 interface PaymentMethod {
@@ -266,7 +280,10 @@ async function handleCreatePayment(
 		typeof input.provider !== "string" ||
 		!isProvider(input.provider) ||
 		!("amountPaise" in input) ||
-		!isValidPaymentAmountPaise(input.amountPaise)
+		!isValidPaymentAmountPaise(input.amountPaise) ||
+		!("customerName" in input) ||
+		!("customerPhone" in input) ||
+		!parseCustomerDetails(input.customerName, input.customerPhone)
 	) {
 		return jsonResponse(
 			{ error: "Enter a valid amount and select a payment method" },
@@ -292,6 +309,13 @@ async function handleCreatePayment(
 	}
 
 	const amountPaise = input.amountPaise;
+	const customer = parseCustomerDetails(
+		input.customerName,
+		input.customerPhone
+	);
+	if (!customer) {
+		return jsonResponse({ error: "Enter a valid name and phone number" }, 400);
+	}
 	const expiryMinutes = parseExpiryMinutes(env);
 	const currency = env.PAYMENT_CURRENCY || "NPR";
 	if (expiryMinutes === null || !/^[A-Z]{3}$/.test(currency)) {
@@ -313,6 +337,7 @@ async function handleCreatePayment(
 		createdAt: now,
 		expiresAt: now + expiryMinutes * 60_000,
 		verifiedAt: null,
+		...customer,
 	};
 	const { response } = await callStore<{ error?: string }>(
 		paymentStore(env),
@@ -577,12 +602,33 @@ async function handleAdminPayments(
 	if (!(await isAdminAuthenticated(request, env))) {
 		return jsonResponse({ error: "Admin authentication required" }, 401);
 	}
+	const query = parseAdminPaymentQuery(new URL(request.url).searchParams);
+	if (!query) {
+		return jsonResponse({ error: "Invalid payment list query" }, 400);
+	}
+	const storeUrl = new URLSearchParams({
+		page: String(query.page),
+		status: query.status,
+	});
 	const { response, data } = await callStore<{
-		payments?: PaymentTransaction[];
-		limit?: number;
-	}>(paymentStore(env), "/transactions", "GET");
-	if (!response.ok || !data?.payments) {
-		return jsonResponse({ error: "Could not read pending payments" }, 503);
+		payments?: AdminPayment[];
+		page?: number;
+		pageSize?: number;
+		total?: number;
+		totalPages?: number;
+		status?: string;
+		summary?: Record<string, number>;
+	}>(paymentStore(env), `/transactions?${storeUrl.toString()}`, "GET");
+	if (
+		!response.ok ||
+		!data?.payments ||
+		typeof data.page !== "number" ||
+		typeof data.pageSize !== "number" ||
+		typeof data.total !== "number" ||
+		typeof data.totalPages !== "number" ||
+		!data.summary
+	) {
+		return jsonResponse({ error: "Could not read payment history" }, 503);
 	}
 	return jsonResponse(data);
 }

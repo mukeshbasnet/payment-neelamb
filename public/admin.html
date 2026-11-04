@@ -35,16 +35,34 @@
 				<p id="message" role="status" aria-live="polite"></p>
 				<section id="payments-section" hidden>
 					<div class="list-heading">
-						<h2>Pending payments</h2>
+						<h2>Payment history</h2>
 						<button class="secondary" id="refresh-button" type="button">
 							Refresh
 						</button>
 					</div>
 					<p class="note">
-						Confirming marks this payment as received and grants the customer
-						their paid session.
+						Customer details are retained for up to 30 days. Confirm pending
+						payments only after verifying the exact amount has arrived.
 					</p>
+					<div class="history-controls">
+						<label for="status-filter">Payment status</label>
+						<select id="status-filter">
+							<option value="all">All payments</option>
+							<option value="paid">Paid</option>
+							<option value="pending">Pending</option>
+							<option value="failed">Failed</option>
+							<option value="expired">Expired</option>
+						</select>
+					</div>
+					<div id="payments-summary" class="payments-summary"></div>
 					<div id="payments-list"></div>
+					<nav class="pagination" aria-label="Payment history pages">
+						<button class="secondary" id="previous-page" type="button">
+							Previous
+						</button>
+						<span id="page-indicator" aria-live="polite"></span>
+						<button class="secondary" id="next-page" type="button">Next</button>
+					</nav>
 					<button class="text-button" id="logout-button" type="button">
 						Sign out
 					</button>

@@ -28,11 +28,41 @@
 				<div class="eyebrow">ONE SIMPLE CHECKOUT</div>
 				<h1 id="page-title">Pay your way.</h1>
 				<p class="intro">
-					Choose a payment method below. Your payment is confirmed directly by
-					the payment is confirmed before access is granted.
+					Choose a payment method below. Your payment is confirmed by the
+					merchant before access is granted.
 				</p>
 
 				<form id="payment-form">
+					<label class="amount-label" for="customer-name"> Your name </label>
+					<input
+						class="amount-input"
+						id="customer-name"
+						name="customerName"
+						type="text"
+						autocomplete="name"
+						minlength="2"
+						maxlength="100"
+						required
+					/>
+					<label class="amount-label" for="customer-phone">
+						Phone number
+					</label>
+					<input
+						class="amount-input"
+						id="customer-phone"
+						name="customerPhone"
+						type="tel"
+						autocomplete="tel"
+						inputmode="tel"
+						minlength="7"
+						maxlength="25"
+						placeholder="+977 98XXXXXXXX"
+						required
+					/>
+					<p class="fine-print">
+						We use your name and phone number to identify this payment. This
+						information is kept for up to 30 days.
+					</p>
 					<label class="amount-label" for="payment-amount">
 						Amount (<span id="amount-currency">NPR</span>)
 					</label>
@@ -79,11 +109,11 @@
 					</div>
 					<h2 id="progress-title">Payment reference created</h2>
 					<p id="progress-description"></p>
-					<div class="reference-box">
+					<div class="reference-box" id="payment-reference-box">
 						<span>Payment reference</span>
 						<strong id="payment-reference"></strong>
 					</div>
-					<div class="destination-box">
+					<div class="destination-box" id="destination-box">
 						<span>Pay to</span>
 						<div class="destination-details" id="payment-destination"></div>
 						<p id="payment-instructions"></p>
@@ -91,6 +121,18 @@
 					<div class="qr-box" id="payment-qr" hidden>
 						<strong>Scan to pay</strong>
 						<img id="payment-qr-image" alt="" />
+						<p class="payment-support-note">
+							कृपया
+							<a
+								href="https://wa.me/9779814272487"
+								target="_blank"
+								rel="noopener noreferrer"
+								>+977-9814272487 (WhatsApp)</a
+							>
+							मा फोन गरेर भुक्तानी भएको जानकारी दिनुहोस्, वा
+							<a href="mailto:info@neelamb.com">info@neelamb.com</a>
+							इमेलमार्फत जानकारी दिनुहोस्!
+						</p>
 					</div>
 					<p class="pending-note" id="pending-note">
 						Waiting for payment confirmation. This page will update

@@ -26,9 +26,6 @@
 	"vars": {
 		"PAYMENT_CURRENCY": "NPR",
 		"PAYMENT_EXPIRY_MINUTES": "30",
-		"CITIZENS_BANK_DESTINATION": "",
-		"ESEWA_MERCHANT_ID": "",
-		"NEPAL_BANK_DESTINATION": "",
 		"CITIZENS_BANK_QR_IMAGE": "/payment-qr/citizens-bank.jpg",
 		"ESEWA_QR_IMAGE": "/payment-qr/esewa.jpg",
 		"NEPAL_BANK_QR_IMAGE": "/payment-qr/nepal-bank.jpg",

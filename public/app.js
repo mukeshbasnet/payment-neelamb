@@ -1,19 +1,25 @@
 const form = document.querySelector("#payment-form");
 const methodsElement = document.querySelector("#payment-methods");
 const loadingMessage = document.querySelector("#loading-message");
+const customerNameInput = document.querySelector("#customer-name");
+const customerPhoneInput = document.querySelector("#customer-phone");
 const amountInput = document.querySelector("#payment-amount");
 const submitButton = document.querySelector("#submit-button");
 const amountCurrency = document.querySelector("#amount-currency");
 const errorMessage = document.querySelector("#error-message");
 const paymentProgress = document.querySelector("#payment-progress");
+const progressIcon = document.querySelector("#progress-icon");
 const paymentReference = document.querySelector("#payment-reference");
+const paymentReferenceBox = document.querySelector("#payment-reference-box");
 const paymentDestination = document.querySelector("#payment-destination");
+const destinationBox = document.querySelector("#destination-box");
 const paymentInstructions = document.querySelector("#payment-instructions");
 const paymentQr = document.querySelector("#payment-qr");
 const paymentQrImage = document.querySelector("#payment-qr-image");
 const progressTitle = document.querySelector("#progress-title");
 const progressDescription = document.querySelector("#progress-description");
 const pendingNote = document.querySelector("#pending-note");
+const startOverButton = document.querySelector("#start-over");
 let activeTransaction = null;
 let pollTimer = null;
 
@@ -115,7 +121,9 @@ function amountToPaise(value) {
 function updateSubmitState() {
 	submitButton.disabled =
 		!form.querySelector('input[name="provider"]:checked') ||
-		amountToPaise(amountInput.value) === null;
+		amountToPaise(amountInput.value) === null ||
+		customerNameInput.value.trim().length < 2 ||
+		customerPhoneInput.value.trim().length < 7;
 }
 
 function renderMethods(config) {
@@ -220,10 +228,15 @@ async function pollPayment() {
 		}
 		if (result.status === "paid") {
 			paymentProgress.classList.add("paid");
-			progressTitle.textContent = "Payment confirmed";
+			progressIcon.textContent = "✓";
+			progressTitle.textContent = "Payment successful — thank you!";
 			progressDescription.textContent =
-				"Your payment was verified. A secure session has been issued in this browser.";
+				"Your payment has been confirmed. Your secure access is ready on this device.";
 			pendingNote.hidden = true;
+			paymentReferenceBox.hidden = true;
+			destinationBox.hidden = true;
+			paymentQr.hidden = true;
+			startOverButton.hidden = true;
 			stopPolling();
 			return;
 		}
@@ -269,7 +282,12 @@ form.addEventListener("submit", async (event) => {
 				"Content-Type": "application/json",
 				Accept: "application/json",
 			},
-			body: JSON.stringify({ provider: selection.value, amountPaise }),
+			body: JSON.stringify({
+				provider: selection.value,
+				amountPaise,
+				customerName: customerNameInput.value,
+				customerPhone: customerPhoneInput.value,
+			}),
 		});
 		const result = await response.json();
 		if (!response.ok) {
@@ -308,6 +326,11 @@ document.querySelector("#start-over").addEventListener("click", () => {
 	activeTransaction = null;
 	paymentProgress.hidden = true;
 	paymentProgress.classList.remove("paid");
+	progressIcon.textContent = "↗";
+	paymentReferenceBox.hidden = false;
+	destinationBox.hidden = false;
+	pendingNote.hidden = false;
+	startOverButton.hidden = false;
 	form.hidden = false;
 	updateSubmitState();
 	submitButton.querySelector("span").textContent = "Continue to payment";
@@ -315,6 +338,8 @@ document.querySelector("#start-over").addEventListener("click", () => {
 });
 
 amountInput.addEventListener("input", updateSubmitState);
+customerNameInput.addEventListener("input", updateSubmitState);
+customerPhoneInput.addEventListener("input", updateSubmitState);
 
 loadConfig().catch((error) => {
 	loadingMessage.textContent =

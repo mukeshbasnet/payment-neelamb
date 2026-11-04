@@ -9,6 +9,8 @@ import {
 	isValidPaymentAmountPaise,
 	parseNprAmountToPaise,
 } from "../src/payment-amount";
+import { parseAdminPaymentQuery } from "../src/admin-payment-query";
+import { parseCustomerDetails } from "../src/payment-customer";
 import {
 	createAdminSession,
 	verifyAdminPassword,
@@ -18,6 +20,56 @@ import { generateJWT, verifyJWT } from "../src/jwt";
 
 const SECRET = "a".repeat(64);
 const PAYMENT_ID = "7c4c965e-bd43-4fa2-8506-09e6aefb3a5d";
+
+describe("customer payment details", () => {
+	it("trims customer names and normalizes phone separators", () => {
+		assert.deepEqual(
+			parseCustomerDetails(" Test Customer ", "+977 981-234-5678"),
+			{
+				customerName: "Test Customer",
+				customerPhone: "+9779812345678",
+			}
+		);
+	});
+
+	it("rejects missing, oversized, or invalid customer details", () => {
+		assert.equal(parseCustomerDetails("", "9812345678"), null);
+		assert.equal(parseCustomerDetails("A", "9812345678"), null);
+		assert.equal(parseCustomerDetails("A".repeat(101), "9812345678"), null);
+		assert.equal(parseCustomerDetails("Name", "phone-number"), null);
+		assert.equal(parseCustomerDetails("Name\nAdmin", "9812345678"), null);
+		assert.equal(parseCustomerDetails("Name", "+123"), null);
+	});
+});
+
+describe("admin payment history query", () => {
+	it("defaults to page one with all statuses and accepts filters", () => {
+		assert.deepEqual(parseAdminPaymentQuery(new URLSearchParams()), {
+			page: 1,
+			status: "all",
+		});
+		assert.deepEqual(
+			parseAdminPaymentQuery(new URLSearchParams("page=3&status=paid")),
+			{ page: 3, status: "paid" }
+		);
+	});
+
+	it("rejects invalid page numbers and status filters", () => {
+		for (const query of [
+			"page=0",
+			"page=-1",
+			"page=1.5",
+			"page=9007199254740992",
+			"status=unknown",
+		]) {
+			assert.equal(
+				parseAdminPaymentQuery(new URLSearchParams(query)),
+				null,
+				query
+			);
+		}
+	});
+});
 
 describe("admin authentication", () => {
 	it("verifies strong passwords and rejects invalid candidates", async () => {

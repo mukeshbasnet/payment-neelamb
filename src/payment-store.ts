@@ -1,5 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env, PaymentProvider } from "./env";
+import { parseAdminPaymentQuery } from "./admin-payment-query";
+import { parseCustomerDetails } from "./payment-customer";
 
 type PaymentStatus = "pending" | "paid" | "failed" | "expired";
 
@@ -14,6 +16,8 @@ type PaymentRow = Record<string, SqlStorageValue> & {
 	provider_transaction_id: string | null;
 	verified_at: number | null;
 	verification_method: "provider" | "admin";
+	customer_name: string | null;
+	customer_phone: string | null;
 };
 
 interface PaymentInput {
@@ -25,6 +29,8 @@ interface PaymentInput {
 	createdAt: number;
 	expiresAt: number;
 	verifiedAt: null;
+	customerName: string;
+	customerPhone: string;
 }
 
 interface VerificationInput {
@@ -66,7 +72,8 @@ function isPaymentInput(value: unknown): value is PaymentInput {
 		typeof input.expiresAt === "number" &&
 		Number.isSafeInteger(input.expiresAt) &&
 		input.expiresAt > input.createdAt &&
-		input.verifiedAt === null
+		input.verifiedAt === null &&
+		parseCustomerDetails(input.customerName, input.customerPhone) !== null
 	);
 }
 
@@ -101,6 +108,16 @@ function toPayment(row: PaymentRow) {
 	};
 }
 
+function toAdminPayment(row: PaymentRow) {
+	return {
+		...toPayment(row),
+		customerName: row.customer_name,
+		customerPhone: row.customer_phone,
+		providerTransactionId: row.provider_transaction_id,
+		verificationMethod: row.verification_method,
+	};
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
 	return Response.json(body, {
 		status,
@@ -122,7 +139,9 @@ export class PaymentStore extends DurableObject<Env> {
 				expires_at INTEGER NOT NULL,
 				provider_transaction_id TEXT,
 				verified_at INTEGER,
-				verification_method TEXT NOT NULL DEFAULT 'provider'
+				verification_method TEXT NOT NULL DEFAULT 'provider',
+				customer_name TEXT,
+				customer_phone TEXT
 			);
 			CREATE UNIQUE INDEX IF NOT EXISTS payments_provider_transaction_id
 			ON payments (provider, provider_transaction_id)
@@ -136,6 +155,16 @@ export class PaymentStore extends DurableObject<Env> {
 				"ALTER TABLE payments ADD COLUMN verification_method TEXT NOT NULL DEFAULT 'provider'"
 			);
 		}
+		if (!columns.some((column) => column.name === "customer_name")) {
+			ctx.storage.sql.exec(
+				"ALTER TABLE payments ADD COLUMN customer_name TEXT"
+			);
+		}
+		if (!columns.some((column) => column.name === "customer_phone")) {
+			ctx.storage.sql.exec(
+				"ALTER TABLE payments ADD COLUMN customer_phone TEXT"
+			);
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -144,7 +173,7 @@ export class PaymentStore extends DurableObject<Env> {
 			return this.createPayment(request);
 		}
 		if (url.pathname === "/transactions" && request.method === "GET") {
-			return this.listPendingPayments();
+			return this.listPayments(url.searchParams);
 		}
 
 		const match = url.pathname.match(
@@ -166,18 +195,61 @@ export class PaymentStore extends DurableObject<Env> {
 		return jsonResponse({ error: "Method not allowed" }, 405);
 	}
 
-	private listPendingPayments(): Response {
+	private listPayments(params: URLSearchParams): Response {
+		const query = parseAdminPaymentQuery(params);
+		if (!query) {
+			return jsonResponse({ error: "Invalid payment list query" }, 400);
+		}
 		const now = Date.now();
 		this.ctx.storage.sql.exec(
 			"UPDATE payments SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?",
 			now
 		);
+		const summaryRows = this.ctx.storage.sql
+			.exec<{
+				status: PaymentStatus;
+				count: number;
+			}>("SELECT status, COUNT(*) AS count FROM payments GROUP BY status")
+			.toArray();
+		const summary = {
+			all: 0,
+			pending: 0,
+			paid: 0,
+			failed: 0,
+			expired: 0,
+		};
+		for (const row of summaryRows) {
+			summary[row.status] = row.count;
+			summary.all += row.count;
+		}
+		const whereClause = query.status === "all" ? "" : "WHERE status = ?";
+		const countQuery = this.ctx.storage.sql.exec<{ count: number }>(
+			`SELECT COUNT(*) AS count FROM payments ${whereClause}`,
+			...(query.status === "all" ? [] : [query.status])
+		);
+		const total = countQuery.toArray()[0]?.count ?? 0;
+		const pageSize = 20;
+		const totalPages = Math.ceil(total / pageSize);
+		const page = Math.min(query.page, Math.max(totalPages, 1));
+		const offset = (page - 1) * pageSize;
 		const rows = this.ctx.storage.sql
 			.exec<PaymentRow>(
-				"SELECT * FROM payments WHERE status = 'pending' ORDER BY created_at ASC LIMIT 100"
+				`SELECT * FROM payments ${whereClause}
+				 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+				...(query.status === "all"
+					? [pageSize, offset]
+					: [query.status, pageSize, offset])
 			)
 			.toArray();
-		return jsonResponse({ payments: rows.map(toPayment), limit: 100 });
+		return jsonResponse({
+			payments: rows.map(toAdminPayment),
+			page,
+			pageSize,
+			total,
+			totalPages,
+			status: query.status,
+			summary,
+		});
 	}
 
 	private adminConfirmPayment(id: string): Response {
@@ -227,19 +299,28 @@ export class PaymentStore extends DurableObject<Env> {
 		if (!isPaymentInput(value)) {
 			return jsonResponse({ error: "Invalid payment record" }, 400);
 		}
+		const customer = parseCustomerDetails(
+			value.customerName,
+			value.customerPhone
+		);
+		if (!customer) {
+			return jsonResponse({ error: "Invalid customer details" }, 400);
+		}
 
 		try {
 			await this.ctx.storage.setAlarm(Date.now() + RETENTION_MS);
 			this.ctx.storage.sql.exec(
 				`INSERT INTO payments
-					(id, provider, amount_paise, currency, status, created_at, expires_at)
-				 VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+					(id, provider, amount_paise, currency, status, created_at, expires_at, customer_name, customer_phone)
+				 VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
 				value.id,
 				value.provider,
 				value.amountPaise,
 				value.currency,
 				value.createdAt,
-				value.expiresAt
+				value.expiresAt,
+				customer.customerName,
+				customer.customerPhone
 			);
 		} catch (error) {
 			console.error(

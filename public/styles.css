@@ -443,6 +443,11 @@ h1 {
 	background: #f6f8fc;
 }
 
+.reference-box[hidden],
+.destination-box[hidden] {
+	display: none;
+}
+
 .reference-box span,
 .destination-box span {
 	color: var(--muted);
@@ -506,6 +511,22 @@ h1 {
 	aspect-ratio: 1;
 	object-fit: contain;
 	image-rendering: pixelated;
+}
+
+.payment-support-note {
+	max-width: 520px;
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.7;
+	text-align: center;
+}
+
+.payment-support-note a {
+	color: var(--brand);
+	font-weight: 700;
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
 
 .pending-note {

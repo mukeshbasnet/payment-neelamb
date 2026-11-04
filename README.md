@@ -35,7 +35,11 @@ amount with the selected provider in the pending transaction.
 
 ### Public configuration
 
-Set these non-secret values in `wrangler.jsonc` under `vars`:
+Set these non-secret values in `wrangler.jsonc` under `vars` or in the
+Cloudflare Worker dashboard. Because this repository is public, configure the
+payment destination variables in the Cloudflare dashboard rather than
+committing merchant payout details to `wrangler.jsonc`. The deploy script uses
+`--keep-vars` to preserve dashboard-managed variables omitted from the config.
 
 | Variable                    | Purpose                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------- |
@@ -48,12 +52,17 @@ Set these non-secret values in `wrangler.jsonc` under `vars`:
 | `ESEWA_QR_IMAGE`            | Optional path to the eSewa QR image in `public/`.                               |
 | `NEPAL_BANK_QR_IMAGE`       | Optional path to the Nepal Bank QR image in `public/`.                          |
 
-Payment destinations are intentionally public checkout details. Do not put banking passwords, PINs, one-time codes, API credentials, or callback secrets here.
+Payment destinations are displayed to customers at checkout. Never put banking
+passwords, PINs, one-time codes, API credentials, or callback secrets in these
+variables.
 
-Customers may enter any positive amount with up to two decimal places. There is
-no configured maximum; the server rejects zero, negative, fractional-paisa, or
-unsafe-integer amounts. The QR images are static merchant codes, so customers
-must enter the checkout amount in their bank or wallet app after scanning.
+Customers must enter their name and phone number along with any positive amount
+with up to two decimal places. The server validates these details before saving
+them with the payment record. Payment records, including customer contact
+details, are automatically deleted after 30 days. There is no configured amount
+maximum; the server rejects zero, negative, fractional-paisa, or unsafe-integer
+amounts. The QR images are static merchant codes, so customers must enter the
+checkout amount in their bank or wallet app after scanning.
 
 The supplied provider QR images are served from `public/payment-qr/` and
 configured in `wrangler.jsonc`. To replace one, use the actual QR image supplied
@@ -61,6 +70,9 @@ or issued for your merchant account and update its matching variable to a
 root-relative PNG, JPEG, or WebP path. The application does not fabricate
 payment QR codes. If an image is unavailable, the checkout continues to show
 the payment destination and instructions without a QR.
+After payment is confirmed, the checkout replaces payment instructions and the
+merchant QR with a thank-you success screen. It does not display a customer
+session token or generate a post-payment QR code.
 
 ### Secrets
 
@@ -76,7 +88,15 @@ npx wrangler secret put NEPAL_BANK_CALLBACK_SECRET
 
 `JWT_SECRET` signs customer sessions. `ADMIN_PASSWORD` protects `/admin`; use a unique random value, not a human-memorable password. Admin sessions are signed, `HttpOnly`, `Secure`, `SameSite=Strict` cookies and expire after eight hours. Each callback secret authenticates that provider's callback; never share the JWT or admin secret with a provider. A payment method is available when it has a destination, `JWT_SECRET`, and either its callback secret or `ADMIN_PASSWORD`. Provider callbacks still require that provider's callback secret.
 
-The admin payment list shows up to 100 oldest pending transactions. Confirm a payment only after independently checking that the exact amount has arrived in the merchant account. Admin confirmations are persisted with their verification time and `admin` method; expired, already-confirmed, or failed transactions cannot be confirmed again.
+The authenticated admin dashboard lists all payment statuses with filters and
+20 records per page, newest first. It shows the customer name and phone, amount,
+provider, payment reference, provider transaction ID when supplied, status,
+created/expiry/verification times, and verification method. Records created
+before customer details were added remain available with blank identity fields.
+Confirm a payment only after independently checking that the exact amount has
+arrived in the merchant account. Admin confirmations are persisted with their
+verification time and `admin` method; expired, already-confirmed, or failed
+transactions cannot be confirmed again.
 
 If a provider requires a merchant API key or secret to create payment intents, store it as a separate Wrangler secret. This template does not invent or embed vendor API credentials.
 
@@ -104,10 +124,13 @@ The browser polls `GET /api/payments/{transactionId}`. Only when the Durable Obj
 
 The Wrangler config uses a SQLite-backed Durable Object for strongly consistent transaction state and includes its initial migration, static assets, current compatibility date, Workers Logs, and Traces. No D1/KV IDs need to be provisioned.
 
-1. Configure the public payment destinations and confirm the provider callback adapters match their official specifications.
+1. Configure the public payment destinations in the Worker dashboard, and
+   confirm the provider callback adapters match their official specifications.
 2. Authenticate Wrangler with the intended Cloudflare account (`npx wrangler login`) or use an already-authorized CI environment.
 3. Set the four production secrets listed above.
-4. Deploy with `npm run deploy`.
+4. Deploy with `npm run deploy`. This script uses Wrangler's `--keep-vars`
+   option so dashboard-managed variables omitted from the repository config
+   are not cleared by code deployments.
 
 Cloudflare authentication is not needed for `npm run dev`, tests, or type checking. A live Worker deployment requires Cloudflare account access. The repo contains no provider credentials; the merchant must obtain them from each provider as needed.
 
